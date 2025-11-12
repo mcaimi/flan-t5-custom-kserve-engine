@@ -5,8 +5,6 @@ It exposes a way to perform inference with a Sequence to Sequence model (such as
 
 It is a companion project to the finetuning example found [here](https://github.com/mcaimi/flan-t5-finetune-ita)
 
-Of the many tasks that can be implemented using such a model, we only support now the "anonymize" task (which is described in the companion repo)
-
 ## Parameters
 
 The server expects a JSON-encoded payload to start inference:
