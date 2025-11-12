@@ -13,7 +13,7 @@ try:
     from kserve import Model, InferRequest, InferResponse
     from kserve.errors import InvalidInput
     from .utils import get_accelerator_device
-    from .tasks import anonymize_text
+    from .tasks import anonymize_text, translate_text, summarize_text
 except Exception as e:
     print(f"Caught Exception during library loading: {e}")
     raise e
@@ -21,13 +21,15 @@ except Exception as e:
 # task map
 TASK_MAP: dict = {
     "anonymize": anonymize_text,
+    "translate": translate_text,
+    "summarize": summarize_text,
 }
 
 # Seq2Seq Model Serving Class
 # instantiate this to perform text translation
 class Seq2SeqModel(Model):
     # initialize class
-    def __init__(self, name: str):
+    def __init__(self, name: str, return_response_headers: bool = False):
         super().__init__(name)
         self.model_id = os.environ.get("MODEL_ID", default="/mnt/models")
         # model checkpoint and tokenizer
@@ -82,44 +84,58 @@ class Seq2SeqModel(Model):
             raise InvalidInput("invalid payload")
 
         # extract pauload
-        pl = payload["instances"][0]
-        # get task
-        task_to_perform: str = pl.get("task")
+        payloads = payload["instances"]
+        for pl in payloads:
+            # get task
+            task_to_perform: str = pl.get("task")
 
-        # check available tasks..
-        if task_to_perform not in TASK_MAP.keys():
-            raise InvalidInput("Unavailable Task.")
+            # check available tasks..
+            if task_to_perform not in TASK_MAP.keys():
+                raise InvalidInput("Unavailable Task.")
 
         # return generation data
-        return pl
+        return payload
 
     # perform a forward pass (inference) and return generated data
     def predict(self, payload: Union[Dict, InferRequest], headers: Dict[str, str] = None) -> Union[Dict, InferResponse]:
         # generate images
+        results: list = []
         try:
-            # get source from request
-            requested_task: str = payload.get("task")
-            source_text: str = payload.get("source")
+            # extract instances
+            pld = payload.get("instances")
 
-            # run inference
-            print(f"Generating with source text {source_text}")
-            target_text: str = TASK_MAP.get(requested_task)(
-                text = source_text,
-                model = self.model,
-                tokenizer = self.tokenizer,
-                accelerator = self.device
-            )
+            # iterate over tasks
+            for task in pld:
+                # get source from request
+                requested_task: str = task.get("task")
+                source_text: str = task.get("source")
 
-        except Exception as e:  # error during generation. return random noise
-            target_text: str = f"Error in inference: {e}"
+                # run inference
+                print(f"Generating with source text {source_text}")
+                target_text: str = TASK_MAP.get(requested_task)(
+                    text = source_text,
+                    model = self.model,
+                    tokenizer = self.tokenizer,
+                    accelerator = self.device
+                )
 
-        # return payload
-        return {
-            "predictions": [
-                {
+                # push result
+                results.append({
                     "task": requested_task,
                     "model_name": self.model_id,
                     "source": source_text,
                     "target": target_text
-                }
-            ]}
+                })
+
+        except Exception as e:  # error during generation. return random noise
+            results.append({
+                "task": requested_task,
+                "model_name": self.model_id,
+                "source": source_text,
+                "target": f"Error in inference: {e}"
+            })
+
+        # return payload
+        return {
+            "predictions": results
+        }

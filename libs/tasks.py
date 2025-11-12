@@ -5,14 +5,14 @@ try:
 except Exception as e:
     raise e
 
-# transform function
-# ANONYMIZE
-def anonymize_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
+
+# transform text
+def transform_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu", task: str = "translate"):
     """
-    Anonymize PII in Italian text using the fine-tuned model
+        call a specific model task
     """
     # Prepare input
-    input_text = f"anonymize: {text}"
+    input_text = f"{task}: {text}"
     inputs = tokenizer(input_text, return_tensors="pt", max_length=max_length, truncation=truncation)
     
     # move to device
@@ -29,5 +29,29 @@ def anonymize_text(text, model, tokenizer, max_length: int = 512, truncation: bo
         )
 
     # Decode output
-    anonymized = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return anonymized
+    transformed = tokenizer.decode(outputs[0], skip_special_tokens=True)
+    return transformed
+
+# transform function
+# ANONYMIZE
+def anonymize_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
+    """
+        Anonymize PII in Italian text using the fine-tuned model
+    """
+    return transform_text(text, model, tokenizer, max_length, truncation, accelerator, task="anonymize")
+
+# transform function
+# TRANSLATE
+def translate_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
+    """
+        Translate text using the fine-tuned model (to italian)
+    """
+    return transform_text(text, model, tokenizer, max_length, truncation, accelerator, task="translate English to Italian")
+
+# transform function
+# SUMMARIZE
+def summarize_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
+    """
+        Summarize text using the fine-tuned model
+    """
+    return transform_text(text, model, tokenizer, max_length, truncation, accelerator, task="summarize")

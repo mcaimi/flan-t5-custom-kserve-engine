@@ -24,7 +24,9 @@ if __name__ == "__main__":
         # load model from disk
         model.load()
         # start serving loop
-        ModelServer().start([model])
+        ModelServer(args.http_port,
+                    args.max_threads,
+                    args.enable_docs_url).start([model])
     except Exception as e:
         print(f"Caught Exception: {e}")
         print("Quitting...")
