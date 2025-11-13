@@ -6,11 +6,12 @@ from typing import Dict, Union
 
 # import libraries
 try:
+    from uuid import uuid4 as get_uuid
     from transformers import (
         AutoModelForSeq2SeqLM,
         AutoTokenizer
     )
-    from kserve import Model, InferRequest, InferResponse
+    from kserve import Model, InferRequest, InferResponse, InferOutput
     from kserve.errors import InvalidInput
     from .utils import get_accelerator_device
     from .tasks import anonymize_text, translate_text, summarize_text
@@ -63,7 +64,7 @@ class Seq2SeqModel(Model):
         self.ready = True
 
     # process incoming request payload.
-    # An example JSON payload:
+    # An example v1 JSON payload:
     #  {
     #    "instances": [
     #      {
@@ -72,70 +73,136 @@ class Seq2SeqModel(Model):
     #      }
     #    ]
     #  }
-    # validate input request: v2 payloads not yet supported
-    def preprocess(self, payload: Union[Dict, InferRequest], headers: Dict[str, str] = None) -> Dict:
+    #
+    # An example v2 JSON payload:
+    # {
+    #   "inputs": [
+    #       {
+    #         "name": "anonymize",
+    #         "shape": [1],
+    #         "datatype": "BYTES",
+    #         "data": ["Mi chiamo Marco Caimi e vivo a Ceriano Laghetto"]
+    #       },
+    #    ]
+    # }
+    # validate input request: requested task must be supported
+    async def preprocess(self, payload: Union[Dict, InferRequest], headers: Dict[str, str] = None) -> Union[Dict, InferRequest]:
         if isinstance(payload, Dict) and "instances" in payload:
             headers["request-type"] = "v1"
-        # KServe InferRequest not yet supported
+
+            # extract payload
+            payloads = payload["instances"]
+            for pl in payloads:
+                # get task
+                task_to_perform: str = pl.get("task")
+
+                # check available tasks..
+                if task_to_perform not in TASK_MAP.keys():
+                    raise InvalidInput("Unsupported Task.")
+        # KServe InferRequest (v2)
         elif isinstance(payload, InferRequest):
-            raise InvalidInput("v2 protocol not implemented")
+            headers["request-type"] = "v2"
+            
+            # verify task
+            for tsk in payload.inputs:
+                parms: dict = { "task": tsk.name, "data": tsk.data[0] }
+
+                print(parms)
+                # check tasks
+                if parms.get("task") not in TASK_MAP.keys():
+                    raise InvalidInput("Unsupported Task.")
+
         else:
             # malformed or missing input payload
             raise InvalidInput("invalid payload")
-
-        # extract pauload
-        payloads = payload["instances"]
-        for pl in payloads:
-            # get task
-            task_to_perform: str = pl.get("task")
-
-            # check available tasks..
-            if task_to_perform not in TASK_MAP.keys():
-                raise InvalidInput("Unavailable Task.")
 
         # return generation data
         return payload
 
     # perform a forward pass (inference) and return generated data
-    def predict(self, payload: Union[Dict, InferRequest], headers: Dict[str, str] = None) -> Union[Dict, InferResponse]:
-        # generate images
+    async def predict(self, payload: Union[Dict, InferRequest], headers: Dict[str, str] = None) -> Union[Dict, InferResponse]:
+        # run prediction on v1 and v2 api endpoints
         results: list = []
-        try:
-            # extract instances
-            pld = payload.get("instances")
+        # request uuid
+        req_uuid: str = f"{get_uuid()}"
+        if isinstance(payload, Dict): # v1 api call
+            try:
+                # extract instances
+                pld = payload.get("instances")
 
-            # iterate over tasks
-            for task in pld:
-                # get source from request
-                requested_task: str = task.get("task")
-                source_text: str = task.get("source")
+                # iterate over tasks
+                for task in pld:
+                    # get source from request
+                    requested_task: str = task.get("task")
+                    source_text: str = task.get("source")
 
-                # run inference
-                print(f"Generating with source text {source_text}")
-                target_text: str = TASK_MAP.get(requested_task)(
-                    text = source_text,
-                    model = self.model,
-                    tokenizer = self.tokenizer,
-                    accelerator = self.device
-                )
+                    # run inference
+                    target_text: str = TASK_MAP.get(requested_task)(
+                        text = source_text,
+                        model = self.model,
+                        tokenizer = self.tokenizer,
+                        accelerator = self.device
+                    )
 
-                # push result
+                    # push result
+                    results.append({
+                        "task": requested_task,
+                        "model_name": self.model_id,
+                        "source": source_text,
+                        "target": target_text
+                    })
+
+            except Exception as e:  # error during generation
                 results.append({
                     "task": requested_task,
                     "model_name": self.model_id,
                     "source": source_text,
-                    "target": target_text
+                    "target": f"Error in inference: {e}"
                 })
 
-        except Exception as e:  # error during generation. return random noise
-            results.append({
-                "task": requested_task,
-                "model_name": self.model_id,
-                "source": source_text,
-                "target": f"Error in inference: {e}"
-            })
+            # return payload
+            return {
+                "request_id": req_uuid,
+                "predictions": results
+            }
+        elif isinstance(payload, InferRequest): # v2 api call
+            try:
+                # extract payloads
+                pld = payload.inputs
 
-        # return payload
-        return {
-            "predictions": results
-        }
+                # run inference
+                for item in pld:
+                    requested_task: str = item.name
+                    source_text: str = item.data[0]
+                    
+                    # run inference
+                    target_text: str = TASK_MAP.get(requested_task)(
+                        text = source_text,
+                        model = self.model,
+                        tokenizer = self.tokenizer,
+                        accelerator = self.device
+                    )
+
+                    # append results
+                    results.append(
+                                InferOutput(
+                                    name="result",
+                                    shape=[1],
+                                    datatype="BYTES",
+                                    data=[f"{target_text}"]
+                                )
+                            )
+                
+                # return
+                return InferResponse(
+                            response_id=req_uuid,
+                            model_name=self.name,
+                            infer_outputs=results,
+                        )
+            except Exception as e:
+                output = InferOutput(name="result",
+                                     shape=[1],
+                                     datatype="BYTES",
+                                     data=[f"{e}"])
+                return InferResponse(response_id=req_uuid, model_name=self.name, infer_outputs=[output])
+                
