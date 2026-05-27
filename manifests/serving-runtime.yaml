@@ -19,6 +19,9 @@ spec:
     - name: kserve-container
       image: quay.io/marcocaimi/kserve-seq2seq:latest
       imagePullPolicy: Always
+      args:
+        - "--enable_grpc"
+        - "false"
       ports:
         - containerPort: 8080
           protocol: TCP
@@ -31,6 +34,8 @@ spec:
   supportedModelFormats:
     - autoSelect: true
       name: pytorch
+    - autoSelect: true
+      name: vLLM
   volumes:
     - emptyDir:
         medium: Memory
