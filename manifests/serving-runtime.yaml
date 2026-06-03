@@ -31,11 +31,10 @@ spec:
   multiModel: false
   protocolVersions:
     - v1
+    - v2
   supportedModelFormats:
     - autoSelect: true
       name: pytorch
-    - autoSelect: true
-      name: vLLM
   volumes:
     - emptyDir:
         medium: Memory

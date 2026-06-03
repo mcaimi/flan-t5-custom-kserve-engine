@@ -1,57 +1,60 @@
 #!/usr/bin/env python
 
-try:
-    import torch
-except Exception as e:
-    raise e
+import os
+
+import torch
+
+MAX_LENGTH = int(os.environ.get("MAX_LENGTH", "512"))
+NUM_BEAMS = int(os.environ.get("NUM_BEAMS", "4"))
+EARLY_STOPPING = os.environ.get("EARLY_STOPPING", "true").lower() == "true"
+
+TASK_PREFIX_MAP: dict = {
+    "anonymize": "anonymize",
+    "translate": "translate English to Italian",
+    "summarize": "summarize",
+}
 
 
-# transform text
-def transform_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu", task: str = "translate"):
-    """
-        call a specific model task
-    """
-    # Prepare input
-    input_text = f"{task}: {text}"
-    inputs = tokenizer(input_text, return_tensors="pt", max_length=max_length, truncation=truncation)
-    
-    # move to device
+def batch_transform_text(task_text_pairs, model, tokenizer, max_length: int = MAX_LENGTH, truncation: bool = True, accelerator: str = "cpu"):
+    if not task_text_pairs:
+        return []
+
+    input_texts = [f"{task}: {text}" for task, text in task_text_pairs]
+
+    inputs = tokenizer(
+        input_texts,
+        return_tensors="pt",
+        max_length=max_length,
+        truncation=truncation,
+        padding=True,
+    )
     inputs = {k: v.to(accelerator) for k, v in inputs.items()}
-    model = model.to(accelerator)
-    
-    # Generate prediction
+
     with torch.no_grad():
         outputs = model.generate(
             **inputs,
             max_length=max_length,
-            num_beams=4,
-            early_stopping=True
+            num_beams=NUM_BEAMS,
+            early_stopping=EARLY_STOPPING,
         )
 
-    # Decode output
-    transformed = tokenizer.decode(outputs[0], skip_special_tokens=True)
-    return transformed
+    return tokenizer.batch_decode(outputs, skip_special_tokens=True)
 
-# transform function
-# ANONYMIZE
-def anonymize_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
-    """
-        Anonymize PII in Italian text using the fine-tuned model
-    """
+
+def transform_text(text, model, tokenizer, max_length: int = MAX_LENGTH, truncation: bool = True, accelerator: str = "cpu", task: str = "translate"):
+    results = batch_transform_text(
+        [(task, text)], model, tokenizer, max_length, truncation, accelerator
+    )
+    return results[0]
+
+
+def anonymize_text(text, model, tokenizer, max_length: int = MAX_LENGTH, truncation: bool = True, accelerator: str = "cpu"):
     return transform_text(text, model, tokenizer, max_length, truncation, accelerator, task="anonymize")
 
-# transform function
-# TRANSLATE
-def translate_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
-    """
-        Translate text using the fine-tuned model (to italian)
-    """
+
+def translate_text(text, model, tokenizer, max_length: int = MAX_LENGTH, truncation: bool = True, accelerator: str = "cpu"):
     return transform_text(text, model, tokenizer, max_length, truncation, accelerator, task="translate English to Italian")
 
-# transform function
-# SUMMARIZE
-def summarize_text(text, model, tokenizer, max_length: int = 512, truncation: bool = True, accelerator: str = "cpu"):
-    """
-        Summarize text using the fine-tuned model
-    """
+
+def summarize_text(text, model, tokenizer, max_length: int = MAX_LENGTH, truncation: bool = True, accelerator: str = "cpu"):
     return transform_text(text, model, tokenizer, max_length, truncation, accelerator, task="summarize")
